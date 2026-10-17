@@ -468,13 +468,19 @@ export function chamferHole(g, hole, which, c, ang) {
 
 /** Neue Bohrung ab einem Punkt auf der Oberfläche, nach innen. depth=null → durchgehend.
  *  ch = {c, ang} für eine Fase am Eintritt; exitPoint für eine Fase auf der Rückseite. */
-export function newHole(g, point, normal, diameter, depth, ch = null, exitPoint = null) {
+export function newHole(g, point, normal, diameter, depth, ch = null, exitPoint = null, sink = null) {
   const ov = 1;
   const len = ov + (depth == null ? g.boundingSphere.radius * 2 + 10 : depth);
   const base = point.clone().addScaledVector(normal, ov);
   const inward = normal.clone().negate();
   let cutter = cylinderManifold(diameter / 2, len, base, inward);
-  if (ch) {
+  if (sink && sink.type === 'cone') {
+    // Senkkopf: Kegel mit Öffnungswinkel sink.angle von Ø sink.D bis zum Lochdurchmesser
+    cutter = cutter.add(chamferCutter(point, inward, diameter / 2, (sink.D - diameter) / 2, sink.angle / 2));
+  } else if (sink && sink.type === 'cyl') {
+    // Zylinderkopf: gerade Stufe mit Ø sink.D und Tiefe sink.depth
+    cutter = cutter.add(cylinderManifold(sink.D / 2, ov + sink.depth, base, inward));
+  } else if (ch) {
     cutter = cutter.add(chamferCutter(point, inward, diameter / 2, ch.c, ch.ang));
     if (exitPoint) cutter = cutter.add(chamferCutter(exitPoint, normal, diameter / 2, ch.c, ch.ang));
   }
