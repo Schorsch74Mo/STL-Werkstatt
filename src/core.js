@@ -425,12 +425,60 @@ export function resizeHole(g, hole, newDiameter, ends) {
   return drill(cur, R, s.base, hole.axis, s.length);
 }
 
-/** Neue Bohrung ab einem Punkt auf der Oberfläche, nach innen. depth=null → durchgehend. */
-export function newHole(g, point, normal, diameter, depth) {
+/**
+ * Kegel-Fräser für eine Fase am Lochrand. origin = Punkt auf der Oberfläche in der Lochmitte,
+ * dir = Richtung ins Loch hinein, r = Lochradius, c = Fasenbreite (mm), ang = Winkel zur Achse (°).
+ */
+export function chamferDepth(c, ang) { return c / Math.tan(ang * Math.PI / 180); }
+
+function chamferCutter(origin, dir, r, c, ang) {
+  const tn = Math.tan(ang * Math.PI / 180), depth = c / tn, ov = 0.4, ext = 0.2;
+  const poly = [[0, -ov], [r + c + ov * tn, -ov], [Math.max(0.01, r - ext * tn), depth + ext], [0, depth + ext]];
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+  const mat = new THREE.Matrix4().compose(origin, q, new THREE.Vector3(1, 1, 1));
+  return M.Manifold.revolve([poly], 96).transform(Array.from(mat.elements));
+}
+
+/** Vorschau des Fasenkegels im Viewer. */
+export function chamferGhostGeo(origin, dir, r, c, ang) {
+  const depth = chamferDepth(c, ang);
+  const g = new THREE.LatheGeometry([new THREE.Vector2(r + c, 0), new THREE.Vector2(r, depth)], 64);
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+  g.applyMatrix4(new THREE.Matrix4().compose(origin, q, new THREE.Vector3(1, 1, 1)));
+  return g;
+}
+
+/** Position und Richtung der Öffnung (0 = unten, 1 = oben) einer vorhandenen Bohrung. */
+export function holeEnd(hole, i) {
+  return i === 0
+    ? { origin: hole.base.clone(), dir: hole.axis.clone(), r: hole.profile[0].r }
+    : { origin: hole.base.clone().addScaledVector(hole.axis, hole.length), dir: hole.axis.clone().negate(), r: hole.profile[hole.profile.length - 1].r };
+}
+
+/** Bringt an den gewählten offenen Enden einer Bohrung eine Fase an. */
+export function chamferHole(g, hole, which, c, ang) {
+  let m = toManifold(g);
+  for (const i of [0, 1]) {
+    if (!which[i]) continue;
+    const e = holeEnd(hole, i);
+    m = m.subtract(chamferCutter(e.origin, e.dir, e.r, c, ang));
+  }
+  return fromManifold(m);
+}
+
+/** Neue Bohrung ab einem Punkt auf der Oberfläche, nach innen. depth=null → durchgehend.
+ *  ch = {c, ang} für eine Fase am Eintritt; exitPoint für eine Fase auf der Rückseite. */
+export function newHole(g, point, normal, diameter, depth, ch = null, exitPoint = null) {
   const ov = 1;
   const len = ov + (depth == null ? g.boundingSphere.radius * 2 + 10 : depth);
   const base = point.clone().addScaledVector(normal, ov);
-  return drill(g, diameter / 2, base, normal.clone().negate(), len);
+  const inward = normal.clone().negate();
+  let cutter = cylinderManifold(diameter / 2, len, base, inward);
+  if (ch) {
+    cutter = cutter.add(chamferCutter(point, inward, diameter / 2, ch.c, ch.ang));
+    if (exitPoint) cutter = cutter.add(chamferCutter(exitPoint, normal, diameter / 2, ch.c, ch.ang));
+  }
+  return fromManifold(toManifold(g).subtract(cutter));
 }
 
 /** Der „Hohlraum“ einer Bohrung als Drehkörper (mit Fase/Nut), um delta verschoben. */

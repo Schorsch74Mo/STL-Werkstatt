@@ -49,6 +49,17 @@ ghost.raycast = () => {};
 ghost.visible = false;
 scene.add(ghost);
 
+const coneGroup = new THREE.Group();
+const coneMat = new THREE.MeshBasicMaterial({ color: 0xff4d5e, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide });
+scene.add(coneGroup);
+function setCones(list) {
+  coneGroup.children.slice().forEach(m => { m.geometry.dispose(); coneGroup.remove(m); });
+  for (const [o, d, r, c, a] of list) {
+    const m = new THREE.Mesh(C.chamferGhostGeo(o, d, r, c, a), coneMat);
+    m.raycast = () => {};
+    coneGroup.add(m);
+  }
+}
 let grid = null, axes = null;
 
 function resize() {
@@ -72,10 +83,11 @@ resize();
 const S = {
   g: null, an: null, detect: null, solid: null,
   original: null, undo: [], redo: [], name: 'modell',
-  mode: 'idle',            // idle | hole | resize | new | move
+  mode: 'idle',            // idle | hole | resize | new | move | chamfer
   hole: null,              // ausgewählte Bohrung
   anchor: null,            // {point, normal} für neue Bohrung
   d: 5, depth: 5, through: true, step: 0.5, mv: [0, 0, 0],
+  ch: 0, ang: 45, chBack: false, chEnds: [true, true],
 };
 
 function solidTest() { return S.solid || (S.solid = C.makeSolidTest(S.g)); }
@@ -106,7 +118,7 @@ function setGeometry(g, first) {
   mesh.geometry = g;
   S.hole = null; hoverHole = null;
   setOverlay(hoverMesh, null); setOverlay(selMesh, null);
-  ghost.visible = false;
+  ghost.visible = false; setCones([]);
   S.mode = 'idle'; S.anchor = null;
   if (first) {
     const bb = g.boundingBox, size = bb.getSize(new THREE.Vector3());
@@ -227,7 +239,7 @@ function selectHole(h) {
 function cancelMode() {
   S.mode = 'idle'; S.hole = null; S.anchor = null;
   setOverlay(selMesh, null);
-  ghost.visible = false;
+  ghost.visible = false; setCones([]);
   renderPanel();
 }
 
@@ -247,6 +259,7 @@ cv.addEventListener('contextmenu', ev => {
     items.push(['🔴  Bohrung schließen', () => doClose(p.hole)]);
     items.push(['↔  Durchmesser ändern…', () => startResize(p.hole)]);
     items.push(['✥  Verschieben…', () => startMove(p.hole)]);
+    items.push(['◢  Fase anbringen…', () => startChamfer(p.hole)]);
   }
   items.push(['➕  Neue Bohrung hier…', () => startNew(p)]);
   menu.innerHTML = `<div class="head">${p.hole ? describe(p.hole) : 'Fläche'}</div>`;
@@ -304,6 +317,22 @@ function startMove(h) {
   updateGhost();
 }
 
+function startChamfer(h) {
+  const e = endsOf(h);
+  if (!e[0] && !e[1]) return toast('Diese Bohrung hat keine offene Seite – eine Fase gibt es nur am Lochrand.', 'bad', 5000);
+  S.hole = h; S.mode = 'chamfer';
+  if (!(S.ch > 0)) S.ch = 0.5;
+  S.chEnds = [e[0], e[1]];
+  setOverlay(selMesh, h);
+  renderPanel();
+  updateGhost();
+}
+
+function endLabel(h, i) {
+  const o = C.holeEnd(h, i).origin;
+  return `X ${fmt(o.x)} · Y ${fmt(o.y)} · Z ${fmt(o.z)}`;
+}
+
 function startNew(p) {
   S.mode = 'new';
   S.hole = null; setOverlay(selMesh, null);
@@ -322,11 +351,21 @@ function thickness(a) {
 
 function updateGhost() {
   ghost.geometry.dispose();
+  if (S.mode !== 'chamfer') setCones([]);
   if (S.mode === 'resize' && S.hole) {
     const h = S.hole, e = endsOf(h);
     const s0 = e[0] ? 0.4 : 0, s1 = e[1] ? 0.4 : 0;
     ghost.geometry = C.cylinderGeo(S.d / 2, h.length + s0 + s1, h.base.clone().addScaledVector(h.axis, -s0), h.axis);
     ghost.visible = S.d > 0;
+  } else if (S.mode === 'chamfer' && S.hole) {
+    ghost.visible = false;
+    const list = [];
+    if (S.ch > 0 && S.ang >= 5 && S.ang <= 85) for (const i of [0, 1]) if (S.chEnds[i]) {
+      const e = C.holeEnd(S.hole, i);
+      list.push([e.origin, e.dir, e.r, S.ch, S.ang]);
+    }
+    setCones(list);
+    return;
   } else if (S.mode === 'move' && S.hole) {
     ghost.geometry = C.holeGhostGeo(S.hole, new THREE.Vector3(...S.mv), endsOf(S.hole));
     ghost.visible = S.mv.some(v => v !== 0);
@@ -335,6 +374,11 @@ function updateGhost() {
     const len = S.through ? (th ?? 20) + 0.6 : S.depth;
     ghost.geometry = C.cylinderGeo(S.d / 2, len + 0.3, a.point.clone().addScaledVector(a.normal, 0.3), a.normal.clone().negate());
     ghost.visible = S.d > 0;
+    if (S.ch > 0 && S.ang >= 5 && S.ang <= 85) {
+      const list = [[a.point, a.normal.clone().negate(), S.d / 2, S.ch, S.ang]];
+      if (S.through && S.chBack && th) list.push([a.point.clone().addScaledVector(a.normal, -th), a.normal.clone(), S.d / 2, S.ch, S.ang]);
+      setCones(list);
+    } else setCones([]);
   } else ghost.visible = false;
 }
 
@@ -382,13 +426,44 @@ function renderPanel() {
         <button class="wide danger" id="aClose">🔴 Bohrung schließen</button>
         <button class="wide" id="aResize">↔ Durchmesser ändern…</button>
         <button class="wide" id="aMove">✥ Verschieben…</button>
+        <button class="wide" id="aChamfer">◢ Fase anbringen…</button>
         <button class="wide" id="aNew">➕ Neue Bohrung setzen…</button>
         <button class="wide" id="aCancel">Auswahl aufheben</button>
       </div>`;
     $('aClose').onclick = () => doClose(h);
     $('aResize').onclick = () => startResize(h);
     $('aMove').onclick = () => startMove(h);
+    $('aChamfer').onclick = () => startChamfer(h);
     $('aNew').onclick = () => { S.mode = 'new'; S.anchor = null; renderPanel(); toast('Jetzt auf die Stelle am Modell klicken, wo gebohrt werden soll.'); };
+    $('aCancel').onclick = cancelMode;
+  } else if (S.mode === 'chamfer' && S.hole) {
+    const h = S.hole, e = endsOf(h);
+    side.innerHTML = `<h3>◢ Fase anbringen</h3>
+      <div class="muted">${describe(h)}<br>Die rote Vorschau zeigt, was abgeschrägt wird.</div>
+      <div class="row"><label for="inCh">Fasenbreite (mm)</label><input id="inCh" type="number" min="0.1" step="0.1" value="${S.ch}"></div>
+      <div class="row"><label for="inAng">Winkel zur Achse (°)</label><input id="inAng" type="number" min="10" max="80" step="5" value="${S.ang}"></div>
+      <div class="muted" style="font-size:12px">45° = gleichmäßige Fase. Kleinerer Winkel = flacher und länger ins Loch, größerer = steiler und kürzer.</div>
+      <div class="muted" style="margin-top:8px">An welcher Öffnung?</div>
+      ${[0, 1].filter(i => e[i]).map(i => `<div class="row"><label><input type="checkbox" data-e="${i}" ${S.chEnds[i] ? 'checked' : ''}> ${endLabel(h, i)}</label></div>`).join('')}
+      <div class="stat" id="info"></div>
+      <div class="btns">
+        <button class="primary" id="aApply">Fase anbringen</button>
+        <button id="aCancel">Abbrechen</button>
+      </div>`;
+    const info = () => { $('info').textContent = `Tiefe der Fase ins Loch: ${fmt(C.chamferDepth(S.ch || 0, S.ang))} mm`; };
+    info();
+    $('inCh').oninput = ev => { S.ch = +ev.target.value || 0; info(); updateGhost(); };
+    $('inAng').oninput = ev => { S.ang = +ev.target.value || 45; info(); updateGhost(); };
+    side.querySelectorAll('[data-e]').forEach(cb => cb.onchange = () => { S.chEnds[+cb.dataset.e] = cb.checked; updateGhost(); });
+    $('aApply').onclick = () => {
+      if (!(S.ch >= 0.05)) return toast('Bitte eine Fasenbreite von mindestens 0,05 mm eingeben.', 'bad');
+      if (S.ang < 10 || S.ang > 80) return toast('Der Winkel muss zwischen 10° und 80° liegen.', 'bad');
+      const which = [e[0] && S.chEnds[0], e[1] && S.chEnds[1]];
+      if (!which[0] && !which[1]) return toast('Bitte mindestens eine Öffnung wählen.', 'bad');
+      if (C.chamferDepth(S.ch, S.ang) > h.length) return toast('Die Fase wäre tiefer als die Bohrung. Bitte kleiner wählen.', 'bad', 5000);
+      const c = S.ch, a = S.ang;
+      commit(`Fase ${fmt(c)} mm × ${fmt(a)}° angebracht`, () => C.chamferHole(S.g, h, which, c, a));
+    };
     $('aCancel').onclick = cancelMode;
   } else if (S.mode === 'move' && S.hole) {
     const row = (i, n, c) => `<div class="row"><label for="mv${i}" style="color:${c};font-weight:600">${n}-Achse</label><span><input id="mv${i}" type="number" step="0.5" value="${S.mv[i]}"> mm</span></div>`;
@@ -429,6 +504,9 @@ function renderPanel() {
       ${presetsHTML()}
       <div class="row"><label><input type="checkbox" id="inThru" ${S.through ? 'checked' : ''}> durchgehend</label>
         <span><input id="inDepth" type="number" min="0.5" step="0.5" value="${S.depth}" ${S.through ? 'disabled' : ''} style="width:70px"> mm tief</span></div>
+      <div class="row"><label for="inCh">Fase (mm, 0 = keine)</label><input id="inCh" type="number" min="0" step="0.1" value="${S.ch}"></div>
+      <div class="row"><label for="inAng">Winkel zur Achse (°)</label><input id="inAng" type="number" min="10" max="80" step="5" value="${S.ang}"></div>
+      <div class="row"><label class="muted"><input type="checkbox" id="inBack" ${S.chBack ? 'checked' : ''} ${S.through ? '' : 'disabled'}> Fase auch auf der Rückseite</label></div>
       <div class="row"><span class="muted">Fein verschieben</span><label class="muted">Schritt <input id="inStep" type="number" min="0.1" step="0.1" value="${S.step}" style="width:60px"> mm</label></div>
       <div class="pad">
         <span></span><button data-n="0,1">▲</button><span></span>
@@ -441,7 +519,10 @@ function renderPanel() {
         <button id="aCancel">Abbrechen</button>
       </div>`;
     bindPresets();
-    $('inThru').onchange = e => { S.through = e.target.checked; $('inDepth').disabled = S.through; updateGhost(); };
+    $('inThru').onchange = e => { S.through = e.target.checked; $('inDepth').disabled = S.through; $('inBack').disabled = !S.through; updateGhost(); };
+    $('inCh').oninput = e => { S.ch = Math.max(0, +e.target.value || 0); updateGhost(); };
+    $('inAng').oninput = e => { S.ang = +e.target.value || 45; updateGhost(); };
+    $('inBack').onchange = e => { S.chBack = e.target.checked; updateGhost(); };
     $('inDepth').oninput = e => { S.depth = +e.target.value || 0; updateGhost(); };
     $('inStep').oninput = e => { S.step = +e.target.value || 0.5; };
     side.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { const [u, v] = b.dataset.n.split(',').map(Number); if (S.anchor) nudge(u, v); });
@@ -449,8 +530,13 @@ function renderPanel() {
       if (!S.anchor) return toast('Erst auf die Stelle am Modell klicken.', 'bad');
       if (!(S.d >= 0.5)) return toast('Bitte einen Durchmesser von mindestens 0,5 mm eingeben.', 'bad');
       if (!S.through && !(S.depth > 0)) return toast('Bitte eine Tiefe angeben.', 'bad');
+      if (S.ch > 0 && (S.ang < 10 || S.ang > 80)) return toast('Der Winkel muss zwischen 10° und 80° liegen.', 'bad');
       const { point, normal } = S.anchor, d = S.d, depth = S.through ? null : S.depth;
-      commit(`Bohrung Ø ${fmt(d)} mm gesetzt`, () => C.newHole(S.g, point, normal, d, depth));
+      const ch = S.ch > 0 ? { c: S.ch, ang: S.ang } : null;
+      if (ch && !S.through && C.chamferDepth(ch.c, ch.ang) > depth) return toast('Die Fase wäre tiefer als die Bohrung. Bitte kleiner wählen.', 'bad', 5000);
+      const th = thickness(S.anchor);
+      const exit = ch && S.through && S.chBack && th ? point.clone().addScaledVector(normal, -th) : null;
+      commit(`Bohrung Ø ${fmt(d)} mm gesetzt${ch ? ' (mit Fase)' : ''}`, () => C.newHole(S.g, point, normal, d, depth, ch, exit));
     };
     $('aCancel').onclick = cancelMode;
     renderPanelInfo();
@@ -500,7 +586,7 @@ export function loadBuffer(buf, name) {
     toast('Datei konnte nicht gelesen werden: ' + e.message, 'bad', 6000);
   }
 }
-window.__werkstatt = { loadBuffer, S, C, THREE, camera, controls, mesh, pick, doClose, startNew, startResize, startMove };
+window.__werkstatt = { loadBuffer, S, C, THREE, camera, controls, mesh, pick, doClose, startNew, startResize, startMove, startChamfer };
 
 async function openFile(f) {
   if (f) loadBuffer(await f.arrayBuffer(), f.name);
