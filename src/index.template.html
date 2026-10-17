@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STL-Werkstatt</title>
+<style>
+  :root {
+    --bg: #14171c; --panel: #1d222a; --panel2: #262c36; --line: #333b48;
+    --text: #e6e9ee; --muted: #8f99a8; --accent: #3da5ff; --accent2: #ff9d2e;
+    --ok: #4cd08a; --warn: #ffb347; --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel);
+    border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header .brand { font-weight: 700; margin-right: 8px; letter-spacing: .2px; }
+  header .sep { width: 1px; height: 24px; background: var(--line); margin: 0 4px; }
+  button { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #04131f; font-weight: 600; }
+  button.danger { background: #3a2226; border-color: #6b3037; }
+  button.wide { width: 100%; text-align: left; }
+  #stage { position: relative; min-height: 0; }
+  canvas { display: block; width: 100%; height: 100%; outline: none; }
+  #side { position: absolute; top: 12px; right: 12px; width: 290px; background: rgba(29,34,42,.94);
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px; backdrop-filter: blur(6px);
+    max-height: calc(100% - 24px); overflow: auto; }
+  #side h3 { margin: 0 0 8px; font-size: 15px; }
+  #side .muted, .muted { color: var(--muted); }
+  #side .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
+  #side input[type=number] { width: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 8px; font: inherit; text-align: right; }
+  #side .btns { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  #side .pad { display: grid; grid-template-columns: repeat(3, 40px); gap: 4px; justify-content: center; margin: 8px 0; }
+  #side .pad button { padding: 4px; }
+  #side .stat { font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); margin-top: 12px; padding-top: 8px; }
+  #menu { position: fixed; display: none; z-index: 20; min-width: 240px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  #menu .head { padding: 6px 10px 8px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  #menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 8px 10px; }
+  #menu button:hover:not(:disabled) { background: var(--panel2); }
+  #tip { position: fixed; display: none; pointer-events: none; z-index: 10; background: rgba(0,0,0,.8);
+    padding: 4px 9px; border-radius: 6px; font-size: 12px; white-space: nowrap; }
+  #toast { position: fixed; left: 50%; bottom: 52px; transform: translateX(-50%); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 10px; padding: 9px 16px; display: none; z-index: 30; max-width: 80vw; }
+  #toast.bad { border-color: var(--bad); } #toast.ok { border-color: var(--ok); }
+  footer { padding: 7px 14px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+  #drop { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column;
+    gap: 14px; text-align: center; background: var(--bg); z-index: 5; }
+  #drop.hidden { display: none; }
+  #drop.over { outline: 3px dashed var(--accent); outline-offset: -16px; }
+  #drop h1 { margin: 0; font-size: 28px; }
+  #drop p { margin: 0; color: var(--muted); max-width: 520px; }
+  kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="brand">🔧 STL-Werkstatt</span>
+    <button id="bOpen">📂 Öffnen…</button>
+    <button id="bSave" disabled>💾 Speichern</button>
+    <span class="sep"></span>
+    <button id="bUndo" disabled title="Strg+Z">↶ Rückgängig</button>
+    <button id="bRedo" disabled title="Strg+Y">↷ Wiederholen</button>
+    <button id="bReset" disabled>⟲ Original</button>
+    <span class="sep"></span>
+    <span class="muted">Ansicht:</span>
+    <button data-view="iso">Schräg</button>
+    <button data-view="top">Oben</button>
+    <button data-view="front">Vorne</button>
+    <button data-view="right">Seite</button>
+    <button data-view="fit">Einpassen</button>
+    <input id="file" type="file" accept=".stl" hidden>
+  </header>
+  <div id="stage">
+    <canvas id="cv" tabindex="0"></canvas>
+    <div id="side" style="display:none"></div>
+    <div id="drop">
+      <h1>STL-Datei hierher ziehen</h1>
+      <p>Oder auf „Öffnen“ klicken. Danach mit der <b>Maus über eine Bohrung fahren</b> – sie leuchtet orange auf –
+         und per <b>Rechtsklick</b> schließen, aufbohren oder an beliebiger Stelle eine neue Bohrung setzen.</p>
+      <button class="primary" id="bOpen2">📂 STL-Datei öffnen…</button>
+    </div>
+  </div>
+  <footer id="hint">Linke Maustaste drehen · rechte Maustaste verschieben · Mausrad zoomen · Rechtsklick auf das Modell = Werkzeuge</footer>
+</div>
+<div id="menu"></div>
+<div id="tip"></div>
+<div id="toast"></div>
+__SCRIPT__
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "stl_werkstatt",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "esbuild": "^0.28.2",
+    "manifold-3d": "^3.5.4",
+    "three": "^0.186.1",
+    "three-mesh-bvh": "^0.9.16"
+  }
+}
