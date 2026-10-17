@@ -1,14 +1,11 @@
 {
-  "name": "stl_werkstatt",
+  "name": "stl-werkstatt",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Bohrungen in STL-Dateien schließen, verschieben, vergrößern und neu setzen – direkt im Browser",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "node build.mjs"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "module",
   "dependencies": {
     "esbuild": "^0.28.2",
