@@ -418,11 +418,13 @@ export function drill(g, radius, base, axis, length) {
 }
 
 /** Ändert den Durchmesser einer vorhandenen Bohrung. ends = [unten offen, oben offen]. */
-export function resizeHole(g, hole, newDiameter, ends) {
+export function resizeHole(g, hole, newDiameter, ends, sink = null, sinkEnd = 0) {
   const R = newDiameter / 2;
   const cur = R < hole.rmax - 0.005 ? closeHole(g, hole) : g;
   const s = segment(hole, ends[0] ? OVER_OPEN : 0, ends[1] ? OVER_OPEN : 0);
-  return drill(cur, R, s.base, hole.axis, s.length);
+  let cutter = cylinderManifold(R, s.length, s.base, hole.axis);
+  if (sink) { const e = holeEnd(hole, sinkEnd); cutter = cutter.add(sinkCutter(e.origin, e.dir, R, sink)); }
+  return fromManifold(toManifold(cur).subtract(cutter));
 }
 
 /**
@@ -468,18 +470,21 @@ export function chamferHole(g, hole, which, c, ang) {
 
 /** Neue Bohrung ab einem Punkt auf der Oberfläche, nach innen. depth=null → durchgehend.
  *  ch = {c, ang} für eine Fase am Eintritt; exitPoint für eine Fase auf der Rückseite. */
+/** Fräser für eine Senkung am Lochrand (r = Lochradius, dir = ins Loch hinein). */
+export function sinkCutter(origin, dir, r, sink) {
+  if (sink.type === 'cone') return chamferCutter(origin, dir, r, (sink.D - 2 * r) / 2, sink.angle / 2);
+  const ov = 0.4;
+  return cylinderManifold(sink.D / 2, ov + sink.depth, origin.clone().addScaledVector(dir, -ov), dir);
+}
+
 export function newHole(g, point, normal, diameter, depth, ch = null, exitPoint = null, sink = null) {
   const ov = 1;
   const len = ov + (depth == null ? g.boundingSphere.radius * 2 + 10 : depth);
   const base = point.clone().addScaledVector(normal, ov);
   const inward = normal.clone().negate();
   let cutter = cylinderManifold(diameter / 2, len, base, inward);
-  if (sink && sink.type === 'cone') {
-    // Senkkopf: Kegel mit Öffnungswinkel sink.angle von Ø sink.D bis zum Lochdurchmesser
-    cutter = cutter.add(chamferCutter(point, inward, diameter / 2, (sink.D - diameter) / 2, sink.angle / 2));
-  } else if (sink && sink.type === 'cyl') {
-    // Zylinderkopf: gerade Stufe mit Ø sink.D und Tiefe sink.depth
-    cutter = cutter.add(cylinderManifold(sink.D / 2, ov + sink.depth, base, inward));
+  if (sink) {
+    cutter = cutter.add(sinkCutter(point, inward, diameter / 2, sink));
   } else if (ch) {
     cutter = cutter.add(chamferCutter(point, inward, diameter / 2, ch.c, ch.ang));
     if (exitPoint) cutter = cutter.add(chamferCutter(exitPoint, normal, diameter / 2, ch.c, ch.ang));
@@ -503,9 +508,11 @@ function voidManifold(hole, ends, delta) {
 }
 
 /** Verschiebt eine Bohrung um delta (mm): alte Stelle füllen, gleiche Form an neuer Stelle bohren. */
-export function moveHole(g, hole, delta, ends) {
+export function moveHole(g, hole, delta, ends, sink = null, sinkEnd = 0) {
   const filled = toManifold(closeHole(g, hole));
-  return fromManifold(filled.subtract(voidManifold(hole, ends, delta)));
+  let cutter = voidManifold(hole, ends, delta);
+  if (sink) { const e = holeEnd(hole, sinkEnd); cutter = cutter.add(sinkCutter(e.origin.clone().add(delta), e.dir, e.r, sink)); }
+  return fromManifold(filled.subtract(cutter));
 }
 
 export function holeGhostGeo(hole, delta, ends) {

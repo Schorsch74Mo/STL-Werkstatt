@@ -13,8 +13,8 @@ Bohrungen schließen, verschieben, im Durchmesser ändern oder neu setzen: Maus 
 3. Mit der Maus über eine Bohrung fahren – sie leuchtet orange, Ø und Tiefe werden angezeigt.
 4. **Rechtsklick** auf die Bohrung:
    - Bohrung schließen
-   - Durchmesser ändern (mit Schnellwahl für Schraubenlöcher M3–M8)
-   - Verschieben (pro Achse X/Y/Z ein Maß in mm, auch negativ)
+   - Durchmesser ändern (mit Schnellwahl für Schraubenlöcher M3–M8, optional mit Senkung)
+   - Verschieben (pro Achse X/Y/Z ein Maß in mm, auch negativ, optional mit Senkung)
    - Fase anbringen (Breite in mm, Winkel einstellbar, Standard 45°)
 5. Rechtsklick auf eine freie Fläche: **Neue Bohrung hier** (Durchmesser, Tiefe oder durchgehend, optional Fase oder Senkung (Kegel/Zylinder, mit Schnellwahl M3–M8), Feinverschiebung).
 6. Strg+Z = rückgängig · 💾 Speichern legt `<Name>_bearbeitet.stl` im Download-Ordner ab. Das Original bleibt unverändert.
@@ -52,7 +52,7 @@ Small edits to STL files without CAD and without fiddling in the slicer.
 Close, move, resize or add holes: hover a hole, right-click, done. Runs entirely in your browser, nothing is uploaded.
 
 **Use:** download [`STL-Werkstatt.html`](STL-Werkstatt.html), double-click it, drag in an STL.
-Hover a hole (it turns orange), right-click → *close hole* / *change diameter* / *move* (per-axis offset in mm) / *add chamfer* (width and angle adjustable, default 45°).
+Hover a hole (it turns orange), right-click → *close hole* / *change diameter* / *move* (per-axis offset in mm), both optionally with countersink/counterbore / *add chamfer* (width and angle adjustable, default 45°).
 Right-click on a free surface → *new hole here* (optionally with chamfer, countersink or counterbore). Ctrl+Z undoes; *Save* writes `<name>_bearbeitet.stl`.
 
 **Limits:** recognises round holes (incl. chamfers/grooves), not slots. Mainly tested on Linux. Always check the result in your slicer.

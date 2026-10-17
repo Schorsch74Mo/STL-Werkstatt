@@ -68,8 +68,9 @@ const SINK_PRESETS = {
   cone: [['M3', 3.4, 6.6], ['M4', 4.5, 8.8], ['M5', 5.5, 10.8], ['M6', 6.6, 13.2], ['M8', 9, 17.5]],
   cyl: [['M3', 3.4, 6, 3.4], ['M4', 4.5, 7.5, 4.4], ['M5', 5.5, 9, 5.4], ['M6', 6.6, 10.8, 6.4], ['M8', 9, 14, 8.4]],
 };
-const sinkOK = () => S.sink !== 'none' && S.sd > S.d + 0.05 && (S.sink === 'cone' ? S.sa >= 30 && S.sa <= 140 : S.sh > 0);
-const coneDepth = () => (S.sd - S.d) / 2 / Math.tan(THREE.MathUtils.degToRad(S.sa / 2));
+const curD = () => (S.mode === 'move' && S.hole ? 2 * C.holeEnd(S.hole, S.sinkEnd).r : S.d);
+const sinkOK = () => S.sink !== 'none' && S.sd > curD() + 0.05 && (S.sink === 'cone' ? S.sa >= 30 && S.sa <= 140 : S.sh > 0);
+const coneDepth = () => (S.sd - curD()) / 2 / Math.tan(THREE.MathUtils.degToRad(S.sa / 2));
 let grid = null, axes = null;
 
 function resize() {
@@ -98,7 +99,7 @@ const S = {
   anchor: null,            // {point, normal} für neue Bohrung
   d: 5, depth: 5, through: true, step: 0.5, mv: [0, 0, 0],
   ch: 0, ang: 45, chBack: false, chEnds: [true, true],
-  sink: 'none', sd: 6.6, sa: 90, sh: 3.4,
+  sink: 'none', sd: 6.6, sa: 90, sh: 3.4, sinkEnd: 0,
 };
 
 function solidTest() { return S.solid || (S.solid = C.makeSolidTest(S.g)); }
@@ -313,8 +314,10 @@ async function commit(label, fn) {
 
 function doClose(h) { commit('Bohrung geschlossen', () => C.closeHole(S.g, h)); }
 
+function firstOpenEnd(h) { const e = endsOf(h); return e[0] ? 0 : e[1] ? 1 : -1; }
+
 function startResize(h) {
-  S.hole = h; S.mode = 'resize';
+  S.hole = h; S.mode = 'resize'; S.sinkEnd = Math.max(0, firstOpenEnd(h));
   S.d = +((h.uniform ? h.radius : h.rmax) * 2).toFixed(2);
   setOverlay(selMesh, h);
   renderPanel();
@@ -322,7 +325,7 @@ function startResize(h) {
 }
 
 function startMove(h) {
-  S.hole = h; S.mode = 'move'; S.mv = [0, 0, 0];
+  S.hole = h; S.mode = 'move'; S.mv = [0, 0, 0]; S.sinkEnd = Math.max(0, firstOpenEnd(h));
   setOverlay(selMesh, h);
   renderPanel();
   updateGhost();
@@ -360,6 +363,18 @@ function thickness(a) {
   return hit ? hit.distance + 0.01 : null;
 }
 
+function showSink(origin, dir, r) {
+  ghost2.visible = false;
+  if (!sinkOK()) { setCones([]); return; }
+  if (S.sink === 'cone') setCones([[origin, dir, r, (S.sd - 2 * r) / 2, S.sa / 2]]);
+  else {
+    setCones([]);
+    ghost2.geometry.dispose();
+    ghost2.geometry = C.cylinderGeo(S.sd / 2, S.sh + 0.3, origin.clone().addScaledVector(dir, -0.3), dir);
+    ghost2.visible = true;
+  }
+}
+
 function updateGhost() {
   ghost.geometry.dispose();
   ghost2.visible = false;
@@ -369,6 +384,7 @@ function updateGhost() {
     const s0 = e[0] ? 0.4 : 0, s1 = e[1] ? 0.4 : 0;
     ghost.geometry = C.cylinderGeo(S.d / 2, h.length + s0 + s1, h.base.clone().addScaledVector(h.axis, -s0), h.axis);
     ghost.visible = S.d > 0;
+    if (S.sink !== 'none') { const e = C.holeEnd(h, S.sinkEnd); showSink(e.origin, e.dir, S.d / 2); }
   } else if (S.mode === 'chamfer' && S.hole) {
     ghost.visible = false;
     const list = [];
@@ -381,20 +397,14 @@ function updateGhost() {
   } else if (S.mode === 'move' && S.hole) {
     ghost.geometry = C.holeGhostGeo(S.hole, new THREE.Vector3(...S.mv), endsOf(S.hole));
     ghost.visible = S.mv.some(v => v !== 0);
+    if (S.sink !== 'none') { const e = C.holeEnd(S.hole, S.sinkEnd); showSink(e.origin.clone().add(new THREE.Vector3(...S.mv)), e.dir, e.r); }
   } else if (S.mode === 'new' && S.anchor) {
     const a = S.anchor, th = thickness(a);
     const len = S.through ? (th ?? 20) + 0.6 : S.depth;
     ghost.geometry = C.cylinderGeo(S.d / 2, len + 0.3, a.point.clone().addScaledVector(a.normal, 0.3), a.normal.clone().negate());
     ghost.visible = S.d > 0;
-    if (sinkOK()) {
-      const inward = a.normal.clone().negate();
-      if (S.sink === 'cone') setCones([[a.point, inward, S.d / 2, (S.sd - S.d) / 2, S.sa / 2]]);
-      else {
-        setCones([]);
-        ghost2.geometry.dispose();
-        ghost2.geometry = C.cylinderGeo(S.sd / 2, S.sh + 0.3, a.point.clone().addScaledVector(a.normal, 0.3), inward);
-        ghost2.visible = true;
-      }
+    if (S.sink !== 'none') {
+      showSink(a.point, a.normal.clone().negate(), S.d / 2);
     } else if (S.sink === 'none' && S.ch > 0 && S.ang >= 5 && S.ang <= 85) {
       const list = [[a.point, a.normal.clone().negate(), S.d / 2, S.ch, S.ang]];
       if (S.through && S.chBack && th) list.push([a.point.clone().addScaledVector(a.normal, -th), a.normal.clone(), S.d / 2, S.ch, S.ang]);
@@ -434,6 +444,68 @@ function bindPresets() {
   });
   const d = $('inD');
   if (d) d.oninput = () => { S.d = +d.value || 0; updateGhost(); };
+}
+
+const selStyle = 'background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px';
+
+function sinkHTML() {
+  const existing = S.mode === 'resize' || S.mode === 'move';
+  if (existing && firstOpenEnd(S.hole) < 0) return '<div class="muted" style="font-size:12px">Senkung nicht möglich: Die Bohrung hat keine offene Seite.</div>';
+  let h = `<div class="row"><label for="inSink">Senkung</label><select id="inSink" style="${selStyle}">
+    <option value="none" ${S.sink === 'none' ? 'selected' : ''}>keine</option>
+    <option value="cone" ${S.sink === 'cone' ? 'selected' : ''}>Kegel (Senkkopf)</option>
+    <option value="cyl" ${S.sink === 'cyl' ? 'selected' : ''}>Zylinder (Zylinderkopf)</option></select></div>`;
+  if (S.sink === 'none') return h;
+  if (existing) {
+    const e = endsOf(S.hole);
+    if (e[0] && e[1]) h += '<div class="muted">An welcher Öffnung?</div>' + [0, 1].map(i =>
+      `<div class="row"><label><input type="radio" name="sinkEnd" data-se="${i}" ${S.sinkEnd === i ? 'checked' : ''}> ${endLabel(S.hole, i)}</label></div>`).join('');
+  }
+  h += `<div class="row" style="flex-wrap:wrap;justify-content:flex-start;gap:5px"><span class="muted" style="width:100%;font-size:12px">${S.mode === 'move' ? 'Senkung passend für Schraube:' : 'Passend für Schraube (setzt Loch + Senkung):'}</span>${SINK_PRESETS[S.sink].map((q, i) => `<button data-sp="${i}" style="padding:3px 8px">${q[0]}</button>`).join('')}</div>
+    <div class="row"><label for="inSD">Senk-Ø (mm)</label><input id="inSD" type="number" min="1" step="0.1" value="${S.sd}"></div>`;
+  h += S.sink === 'cone'
+    ? `<div class="row"><label for="inSA">Öffnungswinkel (°)</label><input id="inSA" type="number" min="30" max="140" step="1" value="${S.sa}"></div>`
+    : `<div class="row"><label for="inSH">Senktiefe (mm)</label><input id="inSH" type="number" min="0.2" step="0.1" value="${S.sh}"></div>`;
+  return h + '<div class="muted" id="sinkInfo" style="font-size:12px"></div>';
+}
+
+function bindSink() {
+  const sel = $('inSink');
+  if (!sel) return;
+  sel.onchange = e => {
+    S.sink = e.target.value;
+    if (S.sink !== 'none' && !(S.sd > curD())) S.sd = +(curD() * 2).toFixed(1);
+    renderPanel(); updateGhost();
+  };
+  if (S.sink === 'none') return;
+  const info = () => {
+    const el = $('sinkInfo');
+    if (!el) return;
+    el.textContent = !(S.sd > curD()) ? 'Der Senk-Ø muss größer als der Lochdurchmesser sein.'
+      : S.sink === 'cone' ? `Senktiefe: ${fmt(coneDepth())} mm` : '';
+  };
+  info();
+  $('inSD').oninput = e => { S.sd = +e.target.value || 0; info(); updateGhost(); };
+  if (S.sink === 'cone') $('inSA').oninput = e => { S.sa = +e.target.value || 90; info(); updateGhost(); };
+  else $('inSH').oninput = e => { S.sh = +e.target.value || 0; info(); updateGhost(); };
+  side.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => {
+    const q = SINK_PRESETS[S.sink][+b.dataset.sp];
+    if (S.mode !== 'move') { S.d = q[1]; if ($('inD')) $('inD').value = S.d; }
+    S.sd = q[2]; if (q[3]) S.sh = q[3];
+    $('inSD').value = S.sd; if (S.sink === 'cyl') $('inSH').value = S.sh;
+    info(); updateGhost();
+  });
+  side.querySelectorAll('[data-se]').forEach(r => r.onchange = () => { S.sinkEnd = +r.dataset.se; info(); updateGhost(); });
+  if ($('inD')) $('inD').addEventListener('input', info);
+}
+
+/** Prüft die Senkung und liefert {sink} oder {err}. lim = verfügbare Tiefe in mm. */
+function buildSink(lim, what) {
+  if (S.sink === 'none') return { sink: null };
+  if (!sinkOK()) return { err: 'Bitte die Senkung prüfen: Der Senk-Ø muss größer als der Lochdurchmesser sein.' };
+  const sdepth = S.sink === 'cone' ? coneDepth() : S.sh;
+  if (lim && sdepth >= lim) return { err: `Die Senkung (${fmt(sdepth)} mm tief) ist tiefer als ${what} (${fmt(lim)} mm).` };
+  return { sink: S.sink === 'cone' ? { type: 'cone', D: S.sd, angle: S.sa } : { type: 'cyl', D: S.sd, depth: S.sh } };
 }
 
 function renderPanel() {
@@ -491,15 +563,19 @@ function renderPanel() {
     side.innerHTML = `<h3>✥ Bohrung verschieben</h3>
       <div class="muted">${describe(S.hole)}<br>Maß pro Achse eingeben: <b>+</b> = in Pfeilrichtung, <b>−</b> = Gegenrichtung (z. B. X = −3). Rote Vorschau = neue Lage.</div>
       ${row(0, 'X', '#ff6b6b')}${row(1, 'Y', '#4cd08a')}${row(2, 'Z', '#5aa9ff')}
+      ${sinkHTML()}
       <div class="btns">
         <button class="primary" id="aApply">Verschieben</button>
         <button id="aCancel">Abbrechen</button>
       </div>`;
+    bindSink();
     [0, 1, 2].forEach(i => { $('mv' + i).oninput = e => { S.mv[i] = +e.target.value || 0; updateGhost(); }; });
     $('aApply').onclick = () => {
       if (!S.mv.some(v => v !== 0)) return toast('Bitte bei mindestens einer Achse ein Maß eingeben.', 'bad');
       const h = S.hole, e = endsOf(h), d = new THREE.Vector3(...S.mv);
-      commit(`Bohrung um X ${fmt(d.x)} · Y ${fmt(d.y)} · Z ${fmt(d.z)} mm verschoben`, () => C.moveHole(S.g, h, d, e));
+      const bs = buildSink(h.length, 'die Bohrung');
+      if (bs.err) return toast(bs.err, 'bad', 6000);
+      commit(`Bohrung um X ${fmt(d.x)} · Y ${fmt(d.y)} · Z ${fmt(d.z)} mm verschoben${bs.sink ? ' (mit Senkung)' : ''}`, () => C.moveHole(S.g, h, d, e, bs.sink, S.sinkEnd));
     };
     $('aCancel').onclick = cancelMode;
   } else if (S.mode === 'resize' && S.hole) {
@@ -507,15 +583,19 @@ function renderPanel() {
       <div class="muted">Aktuell Ø ${fmt((S.hole.uniform ? S.hole.radius : S.hole.rmax) * 2)} mm${S.hole.uniform ? '' : ' (größte Stelle)'}. Die rote Vorschau zeigt die neue Größe.</div>
       <div class="row"><label for="inD">Neuer Durchmesser (mm)</label><input id="inD" type="number" min="0.5" step="0.1" value="${S.d}"></div>
       ${presetsHTML()}
+      ${sinkHTML()}
       <div class="btns">
         <button class="primary" id="aApply">Übernehmen</button>
         <button id="aCancel">Abbrechen</button>
       </div>`;
     bindPresets();
+    bindSink();
     $('aApply').onclick = () => {
       if (!(S.d >= 0.5)) return toast('Bitte einen Durchmesser von mindestens 0,5 mm eingeben.', 'bad');
       const h = S.hole, e = endsOf(h), d = S.d;
-      commit(`Bohrung auf Ø ${fmt(d)} mm geändert`, () => C.resizeHole(S.g, h, d, e));
+      const bs = buildSink(h.length, 'die Bohrung');
+      if (bs.err) return toast(bs.err, 'bad', 6000);
+      commit(`Bohrung auf Ø ${fmt(d)} mm geändert${bs.sink ? ' (mit Senkung)' : ''}`, () => C.resizeHole(S.g, h, d, e, bs.sink, S.sinkEnd));
     };
     $('aCancel').onclick = cancelMode;
   } else if (S.mode === 'new') {
@@ -525,20 +605,11 @@ function renderPanel() {
       ${presetsHTML()}
       <div class="row"><label><input type="checkbox" id="inThru" ${S.through ? 'checked' : ''}> durchgehend</label>
         <span><input id="inDepth" type="number" min="0.5" step="0.5" value="${S.depth}" ${S.through ? 'disabled' : ''} style="width:70px"> mm tief</span></div>
-      <div class="row"><label for="inSink">Senkung</label><select id="inSink" style="background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px">
-        <option value="none" ${S.sink === 'none' ? 'selected' : ''}>keine</option>
-        <option value="cone" ${S.sink === 'cone' ? 'selected' : ''}>Kegel (Senkkopf)</option>
-        <option value="cyl" ${S.sink === 'cyl' ? 'selected' : ''}>Zylinder (Zylinderkopf)</option></select></div>
+      ${sinkHTML()}
       ${S.sink === 'none' ? `
       <div class="row"><label for="inCh">Fase (mm, 0 = keine)</label><input id="inCh" type="number" min="0" step="0.1" value="${S.ch}"></div>
       <div class="row"><label for="inAng">Winkel zur Achse (°)</label><input id="inAng" type="number" min="10" max="80" step="5" value="${S.ang}"></div>
-      <div class="row"><label class="muted"><input type="checkbox" id="inBack" ${S.chBack ? 'checked' : ''} ${S.through ? '' : 'disabled'}> Fase auch auf der Rückseite</label></div>` : `
-      <div class="row" style="flex-wrap:wrap;justify-content:flex-start;gap:5px"><span class="muted" style="width:100%;font-size:12px">Passend für Schraube (setzt Loch + Senkung):</span>${SINK_PRESETS[S.sink].map((q, i) => `<button data-sp="${i}" style="padding:3px 8px">${q[0]}</button>`).join('')}</div>
-      <div class="row"><label for="inSD">Senk-Ø (mm)</label><input id="inSD" type="number" min="1" step="0.1" value="${S.sd}"></div>
-      ${S.sink === 'cone'
-        ? `<div class="row"><label for="inSA">Öffnungswinkel (°)</label><input id="inSA" type="number" min="30" max="140" step="1" value="${S.sa}"></div>`
-        : `<div class="row"><label for="inSH">Senktiefe (mm)</label><input id="inSH" type="number" min="0.2" step="0.1" value="${S.sh}"></div>`}
-      <div class="muted" id="sinkInfo" style="font-size:12px"></div>`}
+      <div class="row"><label class="muted"><input type="checkbox" id="inBack" ${S.chBack ? 'checked' : ''} ${S.through ? '' : 'disabled'}> Fase auch auf der Rückseite</label></div>` : ''}
       <div class="row"><span class="muted">Fein verschieben</span><label class="muted">Schritt <input id="inStep" type="number" min="0.1" step="0.1" value="${S.step}" style="width:60px"> mm</label></div>
       <div class="pad">
         <span></span><button data-n="0,1">▲</button><span></span>
@@ -552,29 +623,11 @@ function renderPanel() {
       </div>`;
     bindPresets();
     $('inThru').onchange = e => { S.through = e.target.checked; $('inDepth').disabled = S.through; $('inBack').disabled = !S.through; updateGhost(); };
-    $('inSink').onchange = e => { S.sink = e.target.value; if (S.sink !== 'none' && !(S.sd > S.d)) S.sd = +(S.d * 2).toFixed(1); renderPanel(); updateGhost(); };
+    bindSink();
     if (S.sink === 'none') {
       $('inCh').oninput = e => { S.ch = Math.max(0, +e.target.value || 0); updateGhost(); };
       $('inAng').oninput = e => { S.ang = +e.target.value || 45; updateGhost(); };
       $('inBack').onchange = e => { S.chBack = e.target.checked; updateGhost(); };
-    } else {
-      const info = () => {
-        const el = $('sinkInfo');
-        if (!el) return;
-        el.textContent = !(S.sd > S.d) ? 'Der Senk-Ø muss größer als der Lochdurchmesser sein.'
-          : S.sink === 'cone' ? `Senktiefe: ${fmt(coneDepth())} mm` : '';
-      };
-      info();
-      $('inSD').oninput = e => { S.sd = +e.target.value || 0; info(); updateGhost(); };
-      if (S.sink === 'cone') $('inSA').oninput = e => { S.sa = +e.target.value || 90; info(); updateGhost(); };
-      else $('inSH').oninput = e => { S.sh = +e.target.value || 0; info(); updateGhost(); };
-      side.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => {
-        const q = SINK_PRESETS[S.sink][+b.dataset.sp];
-        S.d = q[1]; S.sd = q[2]; if (q[3]) S.sh = q[3];
-        $('inD').value = S.d; $('inSD').value = S.sd; if (S.sink === 'cyl') $('inSH').value = S.sh;
-        info(); updateGhost();
-      });
-      $('inD').addEventListener('input', info);
     }
     $('inDepth').oninput = e => { S.depth = +e.target.value || 0; updateGhost(); };
     $('inStep').oninput = e => { S.step = +e.target.value || 0.5; };
@@ -585,13 +638,9 @@ function renderPanel() {
       if (!S.through && !(S.depth > 0)) return toast('Bitte eine Tiefe angeben.', 'bad');
       if (S.sink === 'none' && S.ch > 0 && (S.ang < 10 || S.ang > 80)) return toast('Der Winkel muss zwischen 10° und 80° liegen.', 'bad');
       const { point, normal } = S.anchor, d = S.d, depth = S.through ? null : S.depth;
-      let sink = null;
-      if (S.sink !== 'none') {
-        if (!sinkOK()) return toast('Bitte die Senkung prüfen: Der Senk-Ø muss größer als der Lochdurchmesser sein.', 'bad', 5000);
-        const sdepth = S.sink === 'cone' ? coneDepth() : S.sh, lim = S.through ? thickness(S.anchor) : depth;
-        if (lim && sdepth >= lim) return toast(`Die Senkung (${fmt(sdepth)} mm tief) ist tiefer als ${S.through ? 'das Material an dieser Stelle' : 'die Bohrung'} (${fmt(lim)} mm).`, 'bad', 6000);
-        sink = S.sink === 'cone' ? { type: 'cone', D: S.sd, angle: S.sa } : { type: 'cyl', D: S.sd, depth: S.sh };
-      }
+      const bs = buildSink(S.through ? thickness(S.anchor) : depth, S.through ? 'das Material an dieser Stelle' : 'die Bohrung');
+      if (bs.err) return toast(bs.err, 'bad', 6000);
+      const sink = bs.sink;
       const ch = S.sink === 'none' && S.ch > 0 ? { c: S.ch, ang: S.ang } : null;
       if (ch && !S.through && C.chamferDepth(ch.c, ch.ang) > depth) return toast('Die Fase wäre tiefer als die Bohrung. Bitte kleiner wählen.', 'bad', 5000);
       const th = thickness(S.anchor);
